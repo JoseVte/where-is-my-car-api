@@ -1,0 +1,8 @@
+target
+.idea
+.vscode
+.git
+.env
+*.json
+!src/**
+HELP.md

@@ -1,0 +1,80 @@
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Never run two deploys at the same time; a newer push waits for the current one
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Tests use Testcontainers (Docker is available on GitHub runners) and mock Firebase,
+      # so no secrets are needed here
+      - name: Test and package
+        run: ./mvnw -B package
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-jar
+          path: target/whereismycar-*.jar
+          retention-days: 7
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: app-jar
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Upload the jar and restart the API
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DAEMON_NAME: ${{ secrets.DAEMON_NAME }}
+        run: |
+          scp whereismycar-*.jar "forge@$DEPLOY_HOST:$DEPLOY_PATH/app.jar.new"
+          ssh "forge@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' DAEMON_NAME='$DAEMON_NAME' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          # Keep the previous jar to roll back by hand if needed
+          [ -f app.jar ] && cp -f app.jar app.jar.previous
+          # mv replaces the file atomically: the running JVM keeps reading the old one
+          mv -f app.jar.new app.jar
+          sudo -n supervisorctl restart "$DAEMON_NAME:*"
+
+          # Healthy when the API answers 401 to an unauthenticated request
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/me || true)
+            if [ "$code" = "401" ]; then echo "API is up"; exit 0; fi
+            sleep 2
+          done
+          echo "API did not come up, last status: $code"
+          exit 1
+          REMOTE

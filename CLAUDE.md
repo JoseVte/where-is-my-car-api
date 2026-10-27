@@ -15,6 +15,12 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 25)
 docker compose --profile app up --build   # API and MySQL fully in Docker
 ```
 
+## Deployment
+
+* Production: Forge server (1 GB Linode shared with other projects), API as a daemon behind Nginx. `.github/workflows/ci-deploy.yml` tests, builds the jar and deploys it over SSH on every push to `main`. Details in `deploy/README.md`.
+* Memory is tight: keep the JVM flags of the daemon, `TOMCAT_MAX_THREADS` and `DB_POOL_SIZE` small. Never build on the server.
+* The repository is public: never commit the server IP, host keys or anything from `.env`.
+
 ## Tests
 
 * Integration tests extend `support/IntegrationTest`: full context, a real MySQL started once by Testcontainers (`@ServiceConnection`), `FirebaseApp`, `FirebaseAuth` and `FirebaseSignInClient` mocked, and the database emptied before each test. Authenticate requests with `as("uid")` (a fake JWT, so no Firebase signature is checked). Keep MySQL, not H2: the case insensitive unique label depends on MySQL collation.

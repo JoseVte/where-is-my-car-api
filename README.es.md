@@ -64,6 +64,10 @@ docker compose --profile app up --build
 
 Levanta MySQL y la API como contenedores. No uses esta opción a la vez que la anterior, porque las dos usan el puerto 8080.
 
+## Despliegue
+
+Consulta [deploy/README.md](deploy/README.md) (en inglés): servidor Forge, Nginx, GitHub Actions y el `.env` de producción.
+
 ## Tests
 
 ```bash
